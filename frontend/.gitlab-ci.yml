@@ -1,0 +1,75 @@
+variables:
+    USER_PROJECT: "onlineshop"
+    PATH_PROJECT: "/home/${USER_PROJECT}/${CI_PROJECT_NAME}"
+    IMAGE_VERSION: "${CI_PROJECT_NAME}:${CI_COMMIT_BRACH}_${CI_COMMIT_TAG}_${CI_COMMIT_SHORT_SHA}"
+    ARACHNI_REPORT: "security_scan_website_${CI_PROJECT_NAME}_${CI_COMMIT_BRACH}_${CI_COMMIT_TAG}_${CI_COMMIT_SHORT_SHA}_report"
+
+
+stages:
+    - build
+    - push
+    - security scan website 
+    - deploy
+
+build:
+    stage: build
+    variables:
+        GIT_STRATEGY: clone
+    before_script: 
+        - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    script:
+        - docker build -t $IMAGE_VERSION .
+    tags:
+        - online-shop-runner-build-shell
+    only:
+        - tags
+
+push:
+    stage: push
+    variables:
+        GIT_STRATEGY: none
+    before_script: 
+        - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    script:
+        - docker push $IMAGE_VERSION
+    after_script:
+        - docker logout $CI_REGISTRY
+    tags:
+        - online-shop-runner-build-shell
+    only:
+        - tags
+
+security scan website:
+    stage: security scan website
+    variables:
+        GIT_STRATEGY: none
+    script:
+        - docker run --rm -v /tmp/:/tmp/ devopseduvn/arachni:v1.4-0.5.10 bin/arachni --output-verbose --scope-include-subdomains http://192.168.58.110:3000 --report-save-path=/tmp/$ARACHNI_REPORT.afr > /dev/null 2>&1
+        - docker run --rm -v /tmp/:/tmp/ devopseduvn/arachni:v1.4-0.5.10 bin/arachni_reporter /tmp/$ARACHNI_REPORT.afr --reporter=html:outfile=/tmp/$ARACHNI_REPORT.html.zip
+        - sudo chmod 777 /tmp/$ARACHNI_REPORT.html.zip
+        - cp /tmp/$ARACHNI_REPORT.html.zip .
+    tags:
+        - online-shop-runner-dev-shell
+    only:
+        - tags
+    artifacts:
+        paths: 
+        - $$ARACHNI_REPORT.html.zip
+        expire_in: 1 day
+
+
+deploy:
+    stage: deploy
+    variables:
+        GIT_STRATEGY: none
+    before_script: 
+        - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    script:
+        - docker pull $IMAGE_VERSION
+        - sudo su ${USER_PROJECT} -c "docker rm -f $CI_PROJECT_NAME;docker run --name $CI_PROJECT_NAME -dp $FE_PORT $IMAGE_VERSION"
+    after_script:
+        - docker logout $CI_REGISTRY
+    tags:
+        - online-shop-runner-dev-shell
+    only:
+        - tags
